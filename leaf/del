@@ -182,3 +182,58 @@ DriverEntry(
 
     return STATUS_SUCCESS;
 }
+......
+
+#include <windows.h>
+#include <stdio.h>
+
+#define PIPE_NAME L"\\\\.\\pipe\\MyNamedPipe"
+#define BUFFER_SIZE 512
+
+HANDLE OpenPipeForReading() {
+    return CreateFile(PIPE_NAME, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+}
+
+HANDLE OpenPipeForWriting() {
+    return CreateFile(PIPE_NAME, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+}
+
+BOOL ReadFromPipe(HANDLE hPipe, char* buffer, DWORD bufferSize) {
+    DWORD bytesRead;
+    return ReadFile(hPipe, buffer, bufferSize, &bytesRead, NULL);
+}
+
+BOOL WriteToPipe(HANDLE hPipe, const char* data, DWORD dataSize) {
+    DWORD bytesWritten;
+    return WriteFile(hPipe, data, dataSize, &bytesWritten, NULL);
+}
+
+int main() {
+    HANDLE hReadPipe = OpenPipeForReading();
+    HANDLE hWritePipe = OpenPipeForWriting();
+
+    if (hReadPipe == INVALID_HANDLE_VALUE || hWritePipe == INVALID_HANDLE_VALUE) {
+        printf("Failed to open pipe. Error: %d\n", GetLastError());
+        return 1;
+    }
+
+    char buffer[BUFFER_SIZE];
+    const char* dataToWrite = "Data from application to driver";
+
+    if (WriteToPipe(hWritePipe, dataToWrite, (DWORD)strlen(dataToWrite))) {
+        printf("Sent data to driver.\n");
+    } else {
+        printf("Failed to write data to pipe. Error: %d\n", GetLastError());
+    }
+
+    if (ReadFromPipe(hReadPipe, buffer, sizeof(buffer)) {
+        printf("Received data from driver: %s\n", buffer);
+    } else {
+        printf("Failed to read data from pipe. Error: %d\n", GetLastError());
+    }
+
+    CloseHandle(hReadPipe);
+    CloseHandle(hWritePipe);
+
+    return 0;
+}
