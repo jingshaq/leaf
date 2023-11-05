@@ -7,12 +7,26 @@ PFILE_OBJECT g_pPipeFileObject = NULL;
 KEVENT g_ExitEvent;
 LIST_ENTRY g_DataList;
 KSPIN_LOCK g_DataListLock;
+KEVENT g_SendEvent;
 
 // 结构体用于链表中存储数据
 typedef struct _DATA_ITEM {
     LIST_ENTRY ListEntry;
     WCHAR Data[BUFFER_SIZE];
 } DATA_ITEM;
+
+NTSTATUS CreateNamedPipe() {
+    UNICODE_STRING pipeName;
+    RtlInitUnicodeString(&pipeName, PIPE_NAME);
+
+    OBJECT_ATTRIBUTES objAttributes;
+    InitializeObjectAttributes(&objAttributes, &pipeName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+
+    IO_STATUS_BLOCK ioStatusBlock;
+    NTSTATUS status = NtCreateNamedPipeFile(&g_pPipeFileObject, GENERIC_READ | GENERIC_WRITE, &objAttributes, &ioStatusBlock, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_CREATE, 0, FILE_SYNCHRONOUS_IO_NONALERT, FILE_PIPE_BYTE_STREAM, FILE_PIPE_BYTE_STREAM, 1, BUFFER_SIZE, BUFFER_SIZE, NULL);
+
+    return status;
+}
 
 VOID ReceiveThread(PVOID StartContext) {
     UNREFERENCED_PARAMETER(StartContext);
@@ -21,8 +35,16 @@ VOID ReceiveThread(PVOID StartContext) {
     timeout.QuadPart = -10000000;  // 1秒的相对时间
 
     while (TRUE) {
-        // 在这里实现从用户层读取数据并处理的逻辑
-        // 你需要使用ZwReadFile函数或其他适当的方法来从管道读取数据
+        // 从管道中接收数据并处理
+        WCHAR receiveBuffer[BUFFER_SIZE];
+        IO_STATUS_BLOCK ioStatusBlock;
+
+        NTSTATUS status = ZwReadFile(g_pPipeFileObject, NULL, NULL, NULL, &ioStatusBlock, receiveBuffer, sizeof(receiveBuffer), NULL, NULL);
+
+        if (NT_SUCCESS(status)) {
+            // 处理接收到的数据
+            KdPrint(("Received data from client: %S\n", receiveBuffer);
+        }
 
         // 检查是否需要退出线程
         if (KeReadStateEvent(&g_ExitEvent) != 0) {
@@ -35,8 +57,29 @@ VOID SendThread(PVOID StartContext) {
     UNREFERENCED_PARAMETER(StartContext);
 
     while (TRUE) {
-        // 在这里实现将数据发送到用户层的逻辑
-        // 你需要使用ZwWriteFile函数或其他适当的方法来向管道写入数据
+        KIRQL irql;
+        KeAcquireSpinLock(&g_DataListLock, &irql);
+
+        if (!IsListEmpty(&g_DataList)) {
+            PLIST_ENTRY entry = RemoveHeadList(&g_DataList);
+            KeReleaseSpinLock(&g_DataListLock, irql);
+
+            DATA_ITEM* dataItem = CONTAINING_RECORD(entry, DATA_ITEM, ListEntry);
+
+            // 在这里实现将数据发送到管道的逻辑
+            IO_STATUS_BLOCK ioStatusBlock;
+            NTSTATUS status = ZwWriteFile(g_pPipeFileObject, NULL, NULL, NULL, &ioStatusBlock, dataItem->Data, sizeof(dataItem->Data), NULL, NULL);
+
+            if (!NT_SUCCESS(status)) {
+                KdPrint(("Failed to send data to pipe. Status: 0x%X\n", status));
+            }
+            ExFreePool(dataItem);
+        } else {
+            KeReleaseSpinLock(&g_DataListLock, irql);
+
+            // 没有数据可发送，等待内核事件通知
+            KeWaitForSingleObject(&g_SendEvent, Executive, KernelMode, FALSE, NULL);
+        }
 
         // 检查是否需要退出线程
         if (KeReadStateEvent(&g_ExitEvent) != 0) {
@@ -45,7 +88,7 @@ VOID SendThread(PVOID StartContext) {
     }
 }
 
-// 在其他地方将数据添加到链表中，例如在驱动程序中
+// 在其他地方将数据添加到链表中
 VOID AddDataToQueue(WCHAR* data) {
     DATA_ITEM* dataItem = ExAllocatePool(NonPagedPool, sizeof(DATA_ITEM));
     if (dataItem != NULL) {
@@ -55,6 +98,9 @@ VOID AddDataToQueue(WCHAR* data) {
         KeAcquireSpinLock(&g_DataListLock, &irql);
         InsertTailList(&g_DataList, &dataItem->ListEntry);
         KeReleaseSpinLock(&g_DataListLock, irql);
+
+        // 通知发送线程有数据可发送
+        KeSetEvent(&g_SendEvent, 0, FALSE);
     }
 }
 
@@ -71,10 +117,15 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
     InitializeListHead(&g_DataList);
     KeInitializeSpinLock(&g_DataListLock);
 
+    // 创建内核事件
+    KeInitializeEvent(&g_SendEvent, SynchronizationEvent, FALSE);
+
     // 创建接收线程
     HANDLE receiveThreadHandle;
     status = PsCreateSystemThread(&receiveThreadHandle, THREAD_ALL_ACCESS, NULL, NULL, NULL, ReceiveThread, NULL);
 
+    if (!NT_SUCCESS(status)) {
+        KdPrint(("Failed to create receive thread.\
     if (!NT_SUCCESS(status)) {
         KdPrint(("Failed to create receive thread.\n"));
     }
