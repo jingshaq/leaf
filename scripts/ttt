@@ -1,0 +1,166 @@
+while (TRUE)
+{
+    if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &recv_addr))
+    {
+        fprintf(stderr, "warning: failed to read packet\n");
+        continue;
+    }
+
+    // Parse packet and get TCP header.
+    WinDivertHelperParsePacket(packet, packet_len, NULL, NULL, NULL, NULL, NULL, &tcp_header, NULL, NULL, NULL, NULL, NULL);
+
+    if (tcp_header != NULL)
+    {
+        // Check if the destination port is 455.
+        if (ntohs(tcp_header->DstPort) == 455)
+        {
+            // Perform your filtering logic for this packet.
+            // ...
+        }
+        else
+        {
+            // Allow the packet to pass through.
+            WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
+            if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+            {
+                fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+            }
+        }
+    }
+    else
+    {
+        // Packet is not a TCP packet, allow it to pass through.
+        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
+        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+        {
+            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+        }
+
+        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, WINDIVERT_HELPER_NO_REPLACE);
+        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+        {
+            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+        }
+
+    }
+}
+
+
+
+
+
+
+
+#include <winsock2.h> // For inet_addr function
+
+// ...
+
+while (TRUE)
+{
+    if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &recv_addr))
+    {
+        fprintf(stderr, "warning: failed to read packet\n");
+        continue;
+    }
+
+    // Parse packet and get TCP header.
+    WinDivertHelperParsePacket(packet, packet_len, NULL, NULL, NULL, NULL, NULL, &tcp_header, NULL, NULL, NULL, NULL, NULL);
+
+    if (tcp_header != NULL)
+    {
+        // Check if the destination port is 455 and the source or destination IP is 10.3.16.2.
+        if (ntohs(tcp_header->DstPort) == 455 && 
+            (ip_header != NULL && ip_header->SrcAddr == inet_addr("10.3.16.2")) ||
+            (ip_header != NULL && ip_header->DstAddr == inet_addr("10.3.16.2")))
+        {
+            // Perform your filtering logic for this packet.
+            // ...
+        }
+        else
+        {
+            // Allow the packet to pass through.
+            WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
+            if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+            {
+                fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+            }
+        }
+    }
+    else
+    {
+        // Packet is not a TCP packet, allow it to pass through.
+        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
+        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+        {
+            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+        }
+    }
+}
+------------------------------------------------------------------
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <winsock2.h> // For inet_addr
+#include "windivert.h"
+
+#define MAXBUF 0xFFFF
+
+int main()
+{
+    HANDLE handle;
+    unsigned char packet[MAXBUF];
+    UINT packet_len;
+    WINDIVERT_ADDRESS recv_addr;
+    PWINDIVERT_IPHDR ip_header;
+    PWINDIVERT_TCPHDR tcp_header;
+
+    // Open the WinDivert handle with the filter rule.
+    handle = WinDivertOpen("outbound and tcp", WINDIVERT_LAYER_NETWORK, 0, 0);
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        fprintf(stderr, "error: failed to open the WinDivert device (%d)\n", GetLastError());
+        exit(EXIT_FAILURE);
+    }
+
+    while (TRUE)
+    {
+        // Read a matching packet.
+        if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &recv_addr))
+        {
+            fprintf(stderr, "warning: failed to read packet\n");
+            continue;
+        }
+
+        // Parse packet and get TCP header.
+        WinDivertHelperParsePacket(packet, packet_len, NULL, NULL, NULL, NULL, NULL, &tcp_header, NULL, NULL, NULL, &ip_header, NULL);
+
+        if (tcp_header != NULL)
+        {
+            // Check if the destination port is 455 and the source or destination IP is 10.3.16.2.
+            if (ntohs(tcp_header->DstPort) == 455 &&
+                (ip_header != NULL && ip_header->SrcAddr == inet_addr("10.3.16.2")) ||
+                (ip_header != NULL && ip_header->DstAddr == inet_addr("10.3.16.2")))
+            {
+                // Perform your filtering logic for this packet.
+                // For example, drop the packet:
+                printf("Dropping packet: Destination port 455 and source or destination IP is 10.3.16.2\n");
+                continue;
+            }
+        }
+
+        // Allow the packet to pass through without modification.
+        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
+        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+        {
+            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+        }
+    }
+
+    // Close the WinDivert handle.
+    WinDivertClose(handle, 0);
+
+    return 0;
+}
+
+
+
