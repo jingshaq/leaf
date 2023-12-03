@@ -1,166 +1,121 @@
-while (TRUE)
-{
-    if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &recv_addr))
-    {
-        fprintf(stderr, "warning: failed to read packet\n");
-        continue;
-    }
 
-    // Parse packet and get TCP header.
-    WinDivertHelperParsePacket(packet, packet_len, NULL, NULL, NULL, NULL, NULL, &tcp_header, NULL, NULL, NULL, NULL, NULL);
-
-    if (tcp_header != NULL)
-    {
-        // Check if the destination port is 455.
-        if (ntohs(tcp_header->DstPort) == 455)
-        {
-            // Perform your filtering logic for this packet.
-            // ...
-        }
-        else
-        {
-            // Allow the packet to pass through.
-            WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
-            if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
-            {
-                fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
-            }
-        }
-    }
-    else
-    {
-        // Packet is not a TCP packet, allow it to pass through.
-        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
-        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
-        {
-            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
-        }
-
-        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, WINDIVERT_HELPER_NO_REPLACE);
-        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
-        {
-            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
-        }
-
-    }
-}
-
-
-
-
-
-
-
-#include <winsock2.h> // For inet_addr function
-
-// ...
-
-while (TRUE)
-{
-    if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &recv_addr))
-    {
-        fprintf(stderr, "warning: failed to read packet\n");
-        continue;
-    }
-
-    // Parse packet and get TCP header.
-    WinDivertHelperParsePacket(packet, packet_len, NULL, NULL, NULL, NULL, NULL, &tcp_header, NULL, NULL, NULL, NULL, NULL);
-
-    if (tcp_header != NULL)
-    {
-        // Check if the destination port is 455 and the source or destination IP is 10.3.16.2.
-        if (ntohs(tcp_header->DstPort) == 455 && 
-            (ip_header != NULL && ip_header->SrcAddr == inet_addr("10.3.16.2")) ||
-            (ip_header != NULL && ip_header->DstAddr == inet_addr("10.3.16.2")))
-        {
-            // Perform your filtering logic for this packet.
-            // ...
-        }
-        else
-        {
-            // Allow the packet to pass through.
-            WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
-            if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
-            {
-                fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
-            }
-        }
-    }
-    else
-    {
-        // Packet is not a TCP packet, allow it to pass through.
-        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
-        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
-        {
-            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
-        }
-    }
-}
-------------------------------------------------------------------
 #include <windows.h>
+#include <setupapi.h>
+#include <cfgmgr32.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <winsock2.h> // For inet_addr
-#include "windivert.h"
 
-#define MAXBUF 0xFFFF
+#pragma comment(lib, "setupapi.lib")
 
-int main()
-{
-    HANDLE handle;
-    unsigned char packet[MAXBUF];
-    UINT packet_len;
-    WINDIVERT_ADDRESS recv_addr;
-    PWINDIVERT_IPHDR ip_header;
-    PWINDIVERT_TCPHDR tcp_header;
+#include <vector>
+#include <iostream>
 
-    // Open the WinDivert handle with the filter rule.
-    handle = WinDivertOpen("outbound and tcp", WINDIVERT_LAYER_NETWORK, 0, 0);
-    if (handle == INVALID_HANDLE_VALUE)
+
+int  get_display_devices() {
+    // Get device information set for all devices
+    HDEVINFO hDevInfo = SetupDiGetClassDevs(NULL, L"DISPLAY", NULL, DIGCF_ALLCLASSES | DIGCF_PRESENT);
+    if (hDevInfo == INVALID_HANDLE_VALUE)
     {
-        fprintf(stderr, "error: failed to open the WinDivert device (%d)\n", GetLastError());
-        exit(EXIT_FAILURE);
+        wprintf(L"SetupDiGetClassDevs failed\n");
+        return 1;
     }
 
-    while (TRUE)
+    // Enumerate through all devices
+    SP_DEVINFO_DATA DeviceInfoData;
+    DeviceInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+    SP_DEVICE_INTERFACE_DATA DeviceInterfaceData;
+    DeviceInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(hDevInfo, i, &DeviceInfoData); i++)
     {
-        // Read a matching packet.
-        if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &recv_addr))
+        DWORD addr, bus, slot = 0, func, dev, data, size2;
+        DWORD size = 0;
+        // Get the device ID
+        WCHAR szDeviceID[MAX_DEVICE_ID_LEN] = {0};
+        CM_Get_Device_IDW(DeviceInfoData.DevInst, szDeviceID, sizeof(szDeviceID), 0);
+
+        // Get the device name
+        WCHAR szDeviceName[256] = {0};
+        DWORD dwSize;
+        SetupDiGetDeviceRegistryProperty(hDevInfo, &DeviceInfoData, SPDRP_DEVICEDESC, NULL, (PBYTE)szDeviceName, sizeof(szDeviceName), &dwSize);
+
+        // Get the Phy device name
+        WCHAR szPhyDeviceName[256] = { 0 };
+        SetupDiGetDeviceRegistryProperty(hDevInfo, &DeviceInfoData, SPDRP_PHYSICAL_DEVICE_OBJECT_NAME, &data, (PBYTE)szPhyDeviceName, sizeof(szPhyDeviceName), &dwSize);
+#if 0
+        memmove(szPhyDeviceName,
+            szPhyDeviceName + 7,
+            (wcslen(szPhyDeviceName) - 6) * sizeof(WCHAR));
+
+        WCHAR szDosDeviceName[MAX_PATH] = { 0 };
+        if (QueryDosDevice(szPhyDeviceName, szDosDeviceName, MAX_PATH))  // Skip the "\??\" prefix
         {
-            fprintf(stderr, "warning: failed to read packet\n");
-            continue;
+            wprintf(L"DOS Device Name: %s\n", szDosDeviceName);
+        }
+#endif
+
+
+        // Get the device name
+        WCHAR szFriendlyDeviceName[256] = { 0 };
+        SetupDiGetDeviceRegistryProperty(hDevInfo, &DeviceInfoData, SPDRP_FRIENDLYNAME, NULL, (PBYTE)szFriendlyDeviceName, sizeof(szFriendlyDeviceName), &dwSize);
+        
+        //WCHAR _szDeviceName[128] = {0};
+        //QueryDosDevice(szFriendlyDeviceName, _szDeviceName, sizeof(_szDeviceName) / sizeof(TCHAR));
+        //wprintf(L"_Device Name: %s\n", _szDeviceName);
+
+        if (!SetupDiGetDeviceRegistryProperty(hDevInfo, &DeviceInfoData,
+            SPDRP_ADDRESS, &data, (PBYTE)&addr, size, NULL)) {
+ 
         }
 
-        // Parse packet and get TCP header.
-        WinDivertHelperParsePacket(packet, packet_len, NULL, NULL, NULL, NULL, NULL, &tcp_header, NULL, NULL, NULL, &ip_header, NULL);
-
-        if (tcp_header != NULL)
-        {
-            // Check if the destination port is 455 and the source or destination IP is 10.3.16.2.
-            if (ntohs(tcp_header->DstPort) == 455 &&
-                (ip_header != NULL && ip_header->SrcAddr == inet_addr("10.3.16.2")) ||
-                (ip_header != NULL && ip_header->DstAddr == inet_addr("10.3.16.2")))
-            {
-                // Perform your filtering logic for this packet.
-                // For example, drop the packet:
-                printf("Dropping packet: Destination port 455 and source or destination IP is 10.3.16.2\n");
-                continue;
-            }
+        if (!SetupDiGetDeviceRegistryProperty(hDevInfo, &DeviceInfoData,
+            SPDRP_UI_NUMBER, &data, (PBYTE)&slot, size, NULL)) {
+     
         }
 
-        // Allow the packet to pass through without modification.
-        WinDivertHelperCalcChecksums(packet, packet_len, &recv_addr, 0);
-        if (!WinDivertSend(handle, packet, packet_len, NULL, &recv_addr))
+        // Enumerate display settings
+        DEVMODEW devMode = { 0 };
+        devMode.dmSize = sizeof(DEVMODEA);
+        if (EnumDisplaySettings(szDeviceName, ENUM_CURRENT_SETTINGS, &devMode))
         {
-            fprintf(stderr, "warning: failed to send packet (%d)\n", GetLastError());
+            // Print the display settings
+            wprintf(L"Display Settings for %ls:\n", szDeviceName);
+            printf("Width: %d\n", devMode.dmPelsWidth);
+            printf("Height: %d\n", devMode.dmPelsHeight);
+            printf("Color depth: %d\n", devMode.dmBitsPerPel);
+            printf("Refresh rate: %d\n", devMode.dmDisplayFrequency);
         }
+
+        HKEY devKey = SetupDiOpenDevRegKey(hDevInfo, &DeviceInfoData, DICS_FLAG_GLOBAL, 0,
+            DIREG_DEV, KEY_READ);
+        BYTE  buff[128] = {0};
+        if (RegQueryValueEx(devKey, L"PortName", NULL, NULL, buff, &size) == ERROR_SUCCESS) {
+            printf("%s\r\n", buff);
+        }
+
+        func = addr & 0x0000FFFF;
+        dev = (addr >> 16) & 0x0000FFFF;
+        
+        wprintf(L"------------BEGIN---------------\n");
+        wprintf(L"Device ID: %s\n", szDeviceID);
+        wprintf(L"Device Name: %s\n", szDeviceName);
+        wprintf(L"PhyDevice Name: %s\n", szPhyDeviceName);
+        wprintf(L"FriendlyDevice Name: %s\n", szFriendlyDeviceName);
+        wprintf(L"func dev: %d,%d\n", func, dev);
+        wprintf(L"slot %d\n", slot);
+        wprintf(L"-----------END----------------\n");
     }
 
-    // Close the WinDivert handle.
-    WinDivertClose(handle, 0);
+    // Cleanup
+    SetupDiDestroyDeviceInfoList(hDevInfo);
 
     return 0;
 }
 
+int main()
+{
 
+    get_display_devices();
 
+    return 0;
+}
